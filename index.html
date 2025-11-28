@@ -479,39 +479,43 @@
     </footer>
 
     <!-- Logic -->
-    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
-    <script>
-        // Constants
-        const STORAGE_KEY = 'rgpv_donors_v1';
-        let currentFilter = 'All';
-        let editingEnrollment = null; // Track if we are editing
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore, collection, addDoc, getDocs, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-        // Dummy Data
-        const DUMMY_DATA = [
-            { name: "Rahul Sharma", enrollment: "0101CS211056", bloodGroup: "O+", phone: "9876543210", status: "Active", pin: "1234" },
-            { name: "Priya Patel", enrollment: "0101IT211023", bloodGroup: "B+", phone: "8765432109", status: "Active", pin: "1234" },
-            { name: "Amit Singh", enrollment: "0101ME211045", bloodGroup: "A-", phone: "7654321098", status: "Active", pin: "1234" },
-            { name: "Sneha Gupta", enrollment: "0101EC211012", bloodGroup: "AB+", phone: "6543210987", status: "Active", pin: "1234" }
-        ];
+        // Firebase Config
+        const firebaseConfig = {
+            apiKey: "AIzaSyC1XgvLIt8lKxcGKbqyEwYk-kvRGkRhYfU",
+            authDomain: "rgpv-help.firebaseapp.com",
+            projectId: "rgpv-help",
+            storageBucket: "rgpv-help.firebasestorage.app",
+            messagingSenderId: "737940304484",
+            appId: "1:737940304484:web:093b23da64917e53c7a571",
+            measurementId: "G-ML7WG835YM"
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const donorsRef = collection(db, "donors");
+
+        // Constants
+        let currentFilter = 'All';
+        let editingId = null; // Track if we are editing (Firestore Doc ID)
+        let allDonors = []; // Store fetched donors locally for filtering
 
         // Initialize Application
         function init() {
-            // Check if data exists in LocalStorage
-            const storedData = localStorage.getItem(STORAGE_KEY);
-
-            if (!storedData) {
-                // Seed with dummy data if empty
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(DUMMY_DATA));
-            }
-
-            // Render the table
-            renderDonors();
+            // Real-time listener
+            const q = query(donorsRef, orderBy("timestamp", "desc"));
+            onSnapshot(q, (snapshot) => {
+                allDonors = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                renderDonors();
+                animateStats(); // Update stats when data changes
+            });
 
             // Attach event listener to form
             document.getElementById('donorForm').addEventListener('submit', handleRegister);
-
-            // Initialize Stats Animation
-            animateStats();
 
             // Mobile Menu Toggle
             const mobileMenuBtn = document.getElementById('mobile-menu-btn');
@@ -523,7 +527,7 @@
         }
 
         // Toggle Mobile Menu
-        function toggleMobileMenu() {
+        window.toggleMobileMenu = function () {
             const mobileMenu = document.getElementById('mobile-menu');
             if (!mobileMenu) return;
 
@@ -531,13 +535,11 @@
 
             if (isHidden) {
                 mobileMenu.classList.remove('hidden');
-                // Small delay to allow display:block to apply before transition
                 requestAnimationFrame(() => {
                     mobileMenu.classList.remove('scale-y-0', 'opacity-0');
                 });
             } else {
                 mobileMenu.classList.add('scale-y-0', 'opacity-0');
-                // Wait for transition to finish before hiding
                 setTimeout(() => {
                     mobileMenu.classList.add('hidden');
                 }, 300);
@@ -545,7 +547,7 @@
         }
 
         // Toast Notification
-        function showToast(message, type = 'success') {
+        window.showToast = function (message, type = 'success') {
             const container = document.getElementById('toastContainer');
             const toast = document.createElement('div');
 
@@ -564,7 +566,6 @@
 
             container.appendChild(toast);
 
-            // Remove after 3 seconds
             setTimeout(() => {
                 toast.style.opacity = '0';
                 toast.style.transform = 'translateX(100%)';
@@ -575,7 +576,18 @@
 
         // Stats Animation
         function animateStats() {
+            // Update stats based on real data
+            const total = allDonors.length;
+            const active = allDonors.filter(d => d.status === 'Active').length;
+
+            // Update DOM elements if they exist (simple approach)
+            // Note: In a real app, we might want separate counters for these
             const counters = document.querySelectorAll('.counter');
+            if (counters.length > 0) {
+                counters[0].setAttribute('data-target', total); // Registered
+                counters[1].setAttribute('data-target', active * 3); // Lives Saved (Approx)
+            }
+
             const observer = new IntersectionObserver((entries) => {
                 entries.forEach(entry => {
                     if (entry.isIntersecting) {
@@ -584,7 +596,7 @@
                         const speed = 200;
 
                         const updateCount = () => {
-                            const count = +counter.innerText;
+                            const count = +counter.innerText.replace('+', '');
                             const inc = target / speed;
 
                             if (count < target) {
@@ -604,10 +616,9 @@
         }
 
         // Filter Donors
-        function filterDonors(group) {
+        window.filterDonors = function (group) {
             currentFilter = group;
 
-            // Update UI buttons
             document.querySelectorAll('.filter-btn').forEach(btn => {
                 if (btn.dataset.group === group) {
                     btn.classList.remove('bg-white', 'text-slate-600', 'border-slate-200', 'hover:border-brand-200', 'hover:text-brand-600');
@@ -625,25 +636,24 @@
         function renderDonors() {
             const tbody = document.getElementById('donorTableBody');
             const emptyState = document.getElementById('emptyState');
-            let donors = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
 
-            // Apply Filter
+            let filteredDonors = allDonors;
+
             if (currentFilter !== 'All') {
-                donors = donors.filter(d => d.bloodGroup === currentFilter);
+                filteredDonors = allDonors.filter(d => d.bloodGroup === currentFilter);
             }
 
-            tbody.innerHTML = ''; // Clear existing rows
+            tbody.innerHTML = '';
 
-            if (donors.length === 0) {
+            if (filteredDonors.length === 0) {
                 emptyState.classList.remove('hidden');
             } else {
                 emptyState.classList.add('hidden');
-                donors.forEach((donor, index) => {
+                filteredDonors.forEach((donor, index) => {
                     const row = document.createElement('tr');
                     row.className = 'hover:bg-slate-50 transition-colors duration-200 group';
-                    // Add staggered animation delay
                     row.style.animation = `fadeInUp 0.5s ease-out ${index * 0.1}s forwards`;
-                    row.style.opacity = '0'; // Start hidden for animation
+                    row.style.opacity = '0';
 
                     const isActive = donor.status === "Active";
                     const statusClass = isActive
@@ -702,24 +712,24 @@
                         </td>
                         <td class="px-8 py-5 whitespace-nowrap">
                             <div class="relative">
-                                <button id="manage-btn-${donor.enrollment}" onclick="toggleActions('${donor.enrollment}')" class="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 font-medium text-sm transition-colors shadow-sm">
+                                <button id="manage-btn-${donor.id}" onclick="toggleActions('${donor.id}')" class="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 font-medium text-sm transition-colors shadow-sm">
                                     Manage
                                 </button>
-                                <div id="actions-${donor.enrollment}" class="hidden flex items-center gap-2 animate-fade-in">
-                                    <button onclick="toggleStatus('${donor.enrollment}')" class="text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors ${actionBtnClass}" title="Toggle Status">
+                                <div id="actions-${donor.id}" class="hidden flex items-center gap-2 animate-fade-in">
+                                    <button onclick="toggleStatus('${donor.id}')" class="text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors ${actionBtnClass}" title="Toggle Status">
                                         ${actionText}
                                     </button>
-                                    <button onclick="editDonor('${donor.enrollment}')" class="p-1.5 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition-colors" title="Edit Details">
+                                    <button onclick="editDonor('${donor.id}')" class="p-1.5 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition-colors" title="Edit Details">
                                         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                                         </svg>
                                     </button>
-                                    <button onclick="deleteDonor('${donor.enrollment}')" class="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Delete Donor">
+                                    <button onclick="deleteDonor('${donor.id}')" class="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Delete Donor">
                                         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                                         </svg>
                                     </button>
-                                    <button onclick="toggleActions('${donor.enrollment}')" class="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg transition-colors" title="Close">
+                                    <button onclick="toggleActions('${donor.id}')" class="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg transition-colors" title="Close">
                                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                                             <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
                                         </svg>
@@ -734,12 +744,11 @@
         }
 
         // Toggle Actions Visibility
-        function toggleActions(enrollment) {
-            const manageBtn = document.getElementById(`manage-btn-${enrollment}`);
-            const actionsDiv = document.getElementById(`actions-${enrollment}`);
+        window.toggleActions = function (id) {
+            const manageBtn = document.getElementById(`manage-btn-${id}`);
+            const actionsDiv = document.getElementById(`actions-${id}`);
 
             if (actionsDiv.classList.contains('hidden')) {
-                // Close others first? Optional, but good UX
                 document.querySelectorAll('[id^="actions-"]').forEach(el => el.classList.add('hidden'));
                 document.querySelectorAll('[id^="manage-btn-"]').forEach(el => el.classList.remove('hidden'));
 
@@ -752,19 +761,17 @@
         }
 
         // Emergency Support Modal Logic
-        function openEmergencyModal() {
+        window.openEmergencyModal = function () {
             const modal = document.getElementById('emergencyModal');
             modal.classList.remove('hidden');
-            // Animate in
             setTimeout(() => {
                 modal.firstElementChild.classList.remove('opacity-0');
                 modal.lastElementChild.classList.remove('scale-95', 'opacity-0');
             }, 10);
         }
 
-        function closeEmergencyModal() {
+        window.closeEmergencyModal = function () {
             const modal = document.getElementById('emergencyModal');
-            // Animate out
             modal.firstElementChild.classList.add('opacity-0');
             modal.lastElementChild.classList.add('scale-95', 'opacity-0');
 
@@ -773,7 +780,6 @@
             }, 300);
         }
 
-        // Close modal on outside click
         window.addEventListener('click', function (e) {
             const modal = document.getElementById('emergencyModal');
             if (e.target === modal) {
@@ -782,103 +788,87 @@
         });
 
         // Toggle Status
-        function toggleStatus(enrollmentToToggle) {
-            let donors = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
-            const donorIndex = donors.findIndex(d => d.enrollment === enrollmentToToggle);
+        window.toggleStatus = async function (id) {
+            const donor = allDonors.find(d => d.id === id);
+            if (!donor) return;
 
-            if (donorIndex !== -1) {
-                // Prompt for PIN
-                const enteredPin = prompt("Please enter your 4-digit PIN to update status:");
+            const enteredPin = prompt("Please enter your 4-digit PIN to update status:");
+            if (enteredPin === null) return;
 
-                if (enteredPin === null) return; // Cancelled
-
-                if (enteredPin === donors[donorIndex].pin) {
-                    const newStatus = donors[donorIndex].status === "Active" ? "Unavailable" : "Active";
-                    donors[donorIndex].status = newStatus;
-                    localStorage.setItem(STORAGE_KEY, JSON.stringify(donors));
-                    renderDonors(); // Re-render the table with the current filter
-
-                    // Show Toast
-                    if (newStatus === "Active") {
-                        showToast("Donor marked as Active", "success");
-                    } else {
-                        showToast("Donor marked as Unavailable", "info");
-                    }
-                } else {
-                    showToast("Incorrect PIN! Access Denied.", "error");
+            if (enteredPin === donor.pin) {
+                const newStatus = donor.status === "Active" ? "Unavailable" : "Active";
+                try {
+                    await updateDoc(doc(db, "donors", id), { status: newStatus });
+                    showToast(newStatus === "Active" ? "Donor marked as Active" : "Donor marked as Unavailable", newStatus === "Active" ? "success" : "info");
+                } catch (e) {
+                    showToast("Error updating status: " + e.message, "error");
                 }
+            } else {
+                showToast("Incorrect PIN! Access Denied.", "error");
             }
         }
 
         // Delete Donor
-        function deleteDonor(enrollmentToDelete) {
-            let donors = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
-            const donorIndex = donors.findIndex(d => d.enrollment === enrollmentToDelete);
+        window.deleteDonor = async function (id) {
+            const donor = allDonors.find(d => d.id === id);
+            if (!donor) return;
 
-            if (donorIndex !== -1) {
-                const enteredPin = prompt("Enter PIN to DELETE this record:");
-                if (enteredPin === null) return;
+            const enteredPin = prompt("Enter PIN to DELETE this record:");
+            if (enteredPin === null) return;
 
-                if (enteredPin === donors[donorIndex].pin) {
-                    if (confirm("Are you sure you want to delete this record? This cannot be undone.")) {
-                        donors.splice(donorIndex, 1);
-                        localStorage.setItem(STORAGE_KEY, JSON.stringify(donors));
-                        renderDonors();
+            if (enteredPin === donor.pin) {
+                if (confirm("Are you sure you want to delete this record? This cannot be undone.")) {
+                    try {
+                        await deleteDoc(doc(db, "donors", id));
                         showToast("Donor record deleted successfully.", "success");
+                    } catch (e) {
+                        showToast("Error deleting record: " + e.message, "error");
                     }
-                } else {
-                    showToast("Incorrect PIN! Delete failed.", "error");
                 }
+            } else {
+                showToast("Incorrect PIN! Delete failed.", "error");
             }
         }
 
         // Edit Donor
-        function editDonor(enrollmentToEdit) {
-            let donors = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
-            const donor = donors.find(d => d.enrollment === enrollmentToEdit);
+        window.editDonor = function (id) {
+            const donor = allDonors.find(d => d.id === id);
+            if (!donor) return;
 
-            if (donor) {
-                const enteredPin = prompt("Enter PIN to EDIT details:");
-                if (enteredPin === null) return;
+            const enteredPin = prompt("Enter PIN to EDIT details:");
+            if (enteredPin === null) return;
 
-                if (enteredPin === donor.pin) {
-                    // Populate Form
-                    document.getElementById('name').value = donor.name;
-                    document.getElementById('enrollment').value = donor.enrollment;
-                    document.getElementById('bloodGroup').value = donor.bloodGroup;
-                    document.getElementById('phone').value = donor.phone;
-                    document.getElementById('pin').value = donor.pin;
+            if (enteredPin === donor.pin) {
+                document.getElementById('name').value = donor.name;
+                document.getElementById('enrollment').value = donor.enrollment;
+                document.getElementById('bloodGroup').value = donor.bloodGroup;
+                document.getElementById('phone').value = donor.phone;
+                document.getElementById('pin').value = donor.pin;
 
-                    // Set Edit Mode
-                    editingEnrollment = enrollmentToEdit;
+                editingId = id;
 
-                    // Update Button Text
-                    const submitBtn = document.querySelector('#donorForm button[type="submit"]');
-                    submitBtn.textContent = "Update Details";
-                    submitBtn.classList.remove('from-brand-600', 'to-brand-700');
-                    submitBtn.classList.add('from-emerald-600', 'to-emerald-700');
+                const submitBtn = document.querySelector('#donorForm button[type="submit"]');
+                submitBtn.textContent = "Update Details";
+                submitBtn.classList.remove('from-brand-600', 'to-brand-700');
+                submitBtn.classList.add('from-emerald-600', 'to-emerald-700');
 
-                    // Scroll to Form
-                    document.getElementById('donate').scrollIntoView({ behavior: 'smooth' });
-                    showToast("Edit Mode Enabled. Update details below.", "info");
-                } else {
-                    showToast("Incorrect PIN! Edit failed.", "error");
-                }
+                document.getElementById('donate').scrollIntoView({ behavior: 'smooth' });
+                showToast("Edit Mode Enabled. Update details below.", "info");
+            } else {
+                showToast("Incorrect PIN! Edit failed.", "error");
             }
         }
 
         // Handle Registration / Update
-        function handleRegister(e) {
+        async function handleRegister(e) {
             e.preventDefault();
 
-            // Get form values
             const name = document.getElementById('name').value;
             const enrollment = document.getElementById('enrollment').value;
             const bloodGroup = document.getElementById('bloodGroup').value;
             const phone = document.getElementById('phone').value;
             const pin = document.getElementById('pin').value;
 
-            // Basic Validation
             if (!name || !enrollment || !bloodGroup || !phone || !pin) {
                 showToast("Please fill all fields!", "error");
                 return;
@@ -889,66 +879,54 @@
                 return;
             }
 
-            let donors = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+            try {
+                if (editingId) {
+                    // UPDATE EXISTING
+                    await updateDoc(doc(db, "donors", editingId), {
+                        name, enrollment, bloodGroup, phone, pin
+                    });
+                    showToast("Details updated successfully!", "success");
 
-            if (editingEnrollment) {
-                // UPDATE EXISTING
-                const index = donors.findIndex(d => d.enrollment === editingEnrollment);
-                if (index !== -1) {
-                    donors[index] = {
-                        ...donors[index],
+                    editingId = null;
+                    const submitBtn = document.querySelector('#donorForm button[type="submit"]');
+                    submitBtn.textContent = "Register Now";
+                    submitBtn.classList.add('from-brand-600', 'to-brand-700');
+                    submitBtn.classList.remove('from-emerald-600', 'to-emerald-700');
+
+                } else {
+                    // CREATE NEW
+                    // Check for duplicate enrollment (Client-side check on loaded data)
+                    if (allDonors.some(d => d.enrollment === enrollment)) {
+                        showToast("Enrollment number already registered!", "error");
+                        return;
+                    }
+
+                    await addDoc(donorsRef, {
                         name,
                         enrollment,
                         bloodGroup,
                         phone,
-                        pin
-                    };
-                    showToast("Details updated successfully!", "success");
+                        pin,
+                        status: "Active",
+                        timestamp: new Date().toISOString()
+                    });
+
+                    showToast("Registration Successful! You are a hero.", "success");
+                    confetti({
+                        particleCount: 100,
+                        spread: 70,
+                        origin: { y: 0.6 },
+                        colors: ['#e11d48', '#be123c', '#ffffff']
+                    });
                 }
 
-                // Reset Edit Mode
-                editingEnrollment = null;
-                const submitBtn = document.querySelector('#donorForm button[type="submit"]');
-                submitBtn.textContent = "Register Now";
-                submitBtn.classList.add('from-brand-600', 'to-brand-700');
-                submitBtn.classList.remove('from-emerald-600', 'to-emerald-700');
+                document.getElementById('donorForm').reset();
+                document.getElementById('donors').scrollIntoView({ behavior: 'smooth' });
 
-            } else {
-                // CREATE NEW
-                // Check for duplicate enrollment
-                if (donors.some(d => d.enrollment === enrollment)) {
-                    showToast("Enrollment number already registered!", "error");
-                    return;
-                }
-
-                const newDonor = {
-                    name,
-                    enrollment,
-                    bloodGroup,
-                    phone,
-                    pin,
-                    status: "Active"
-                };
-                donors.unshift(newDonor);
-
-                showToast("Registration Successful! You are a hero.", "success");
-
-                // Trigger Confetti only on new registration
-                confetti({
-                    particleCount: 100,
-                    spread: 70,
-                    origin: { y: 0.6 },
-                    colors: ['#e11d48', '#be123c', '#ffffff']
-                });
+            } catch (e) {
+                showToast("Error saving data: " + e.message, "error");
+                console.error(e);
             }
-
-            // Save and Render
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(donors));
-            renderDonors();
-            document.getElementById('donorForm').reset();
-
-            // Scroll to list
-            document.getElementById('donors').scrollIntoView({ behavior: 'smooth' });
         }
 
         // Helper to get initials
@@ -956,7 +934,7 @@
             return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
         }
 
-        // Run init when DOM is ready
+        // Start
         document.addEventListener('DOMContentLoaded', init);
     </script>
 </body>
